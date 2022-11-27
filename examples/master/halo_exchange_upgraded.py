@@ -338,7 +338,7 @@ class HaloExchange:
             self.current_matrix[-1, :] = recv_bottom
 
         if self.is_tensor_mesh:
-            return tf.convert_to_tensor(self.current_matrix.reshape(1, sub_nx, sub_ny, 1))
+            return tf.convert_to_tensor(self.current_matrix.reshape(1,self.sub_nx, self.sub_ny, 1))
 
         # return current_domain
         return self.current_matrix

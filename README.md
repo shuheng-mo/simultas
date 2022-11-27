@@ -68,14 +68,7 @@
 [![Test](https://github.com/acse-sm321/Mogo/workflows/Test/badge.svg)](https://github.com/acse-sm321/Mogo/actions)
 
 
-All about parallel computing patterns in Python.
-
-- Topics included:
-
-```bash
-1. Numerical method
-2. AI
-```
+All about parallel computing patterns in Python. Providing parallelisation solutions for computing, engineering problems and more.
 
 <p align="right">(<a href="#top">BACK TO TOP</a>)</p>
 
@@ -99,6 +92,9 @@ Here is an example of how you may give instructions on setting up this project l
 There are some prerequisites before you compile and run the project on local machine or your AI computers. Note that this project built by Python language and relevant packages, add-ons, dependencies.
 
 ```
+numpy
+tensorflow (2.0)
+mpi4py
 ```
 
 ### Installation
