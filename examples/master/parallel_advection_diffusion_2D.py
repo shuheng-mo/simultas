@@ -48,7 +48,6 @@ for i in range(50):
         values[0][i+225][j+125][0] = values[0][i+225][j+125][0] + 1
 
 ################################ MPI Implementation ####################################
-start_time = MPI.Wtime() # start timer
 
 # new strategy here
 he = HaloExchange(structured=True,tensor_used=True,double_precision=True,corner_exchanged=True)
@@ -123,6 +122,7 @@ result = np.empty((1,))
 # do the first update to get the halo values
 current_domain = he.structured_halo_update_2D(current_domain)
 
+start_time = MPI.Wtime() # start timer
 for t in range(1000):
     # print('CURRENT_DOMAIN_SHAPE: ',current_domain.shape)
     

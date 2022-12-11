@@ -58,7 +58,6 @@ values = np.copy(mesh) # no copy needed actually
 # values is just a copy of mesh
 
 ################################ Initializations ####################################
-start_time = time.perf_counter()
 
 # weight matrices
 w1 = ([[[[0.0],        # upwind
@@ -134,6 +133,8 @@ CNN2D_2.compile(loss="mse",
 l1_norms = np.array([])
 l2_norms = np.array([])
 linf_norms = np.array([])
+
+start_time = time.perf_counter()
 
 # running for 1000 steps
 for t in range(1000):

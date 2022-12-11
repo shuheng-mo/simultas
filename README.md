@@ -68,7 +68,7 @@
 [![Test](https://github.com/acse-sm321/Mogo/workflows/Test/badge.svg)](https://github.com/acse-sm321/Mogo/actions)
 
 
-All about parallel computing patterns in Python. Providing parallelisation solutions for computing, engineering problems and more.
+All about parallel computing patterns in Python. Providing parallelisation solutions for computing, engineering problems and more. This repository also contains the source code for publications [publication1]() and [publication2](). 
 
 <p align="right">(<a href="#top">BACK TO TOP</a>)</p>
 
@@ -107,7 +107,7 @@ _Below is an example of how you can instruct your audience on installing and set
    ```
 2. Install required packages / compile
     ```
-    $ python -m pip install simultas
+    $ python3 -m pip install simultas
     ```
 
 3. Trouble shooting & Issues (updating ...)
@@ -131,11 +131,20 @@ Use this space to show useful examples of how a project can be used. Additional 
 _For more examples, please refer to the [Documentation](https://example.com)_
 
 Code example:
-```
-# Executing
-$ from simultas import halo_exchange
+```python
+# import the libraries
+from simultas.halo_exchange import HaloExchange
 
-$ 
+
+## 1. Halo Exchange: see more in examples/ folder
+# create halo exchange instance
+he = HaloExchange()
+_, _, _ =  he.initialization()
+
+problem_mesh = np.array() # or tensor of tensorflow
+problem_mesh = he.strctured_halo_update_1D(problem_mesh)
+
+
 ```
 
 <p align="right">(<a href="#top">BACK TO TOP</a>)</p>
@@ -182,7 +191,9 @@ Distributed under the GPL-3.0 License. See [`LICENSE.md`](https://github.com/shu
 ## Acknowledgments
 This project won't born without the help of these wonderful people/coporations:
 
-* 
+* Boyang Chen
+* Christopher Pain
+* Xiaohu Guo
 
 
 <p align="right">(<a href="#top">BACK TO TOP</a>)</p>
