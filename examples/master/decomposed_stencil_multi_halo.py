@@ -6,7 +6,7 @@ from halos_exchange import HaloExchange
 
 start = perf_counter()
 h = HaloExchange(structured=True, halo_size=3, tensor_used=False,
-                 double_precision=True, corner_exchanged=True)
+                 double_precision=True, corner_exchanged=True) # here we try the halo size with 3
 
 mesh = np.array([[0.78261493, 0.97090189, 0.66327036, 0.76848217, 0.42800353,0.77528106],
                  [0.56767283, 0.57780701, 0.33225302, 0.66295884, 0.87718818,0.56417634],
