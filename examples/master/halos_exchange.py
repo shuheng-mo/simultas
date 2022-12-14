@@ -11,12 +11,13 @@ np.set_printoptions(threshold=sys.maxsize)  # print out the full numpy array
 
 # Halo Exchange class
 class HaloExchange:
-    def __init__(self, structured=True,halo_size = 1,ndim = 1,tensor_used=False,double_precision=False, corner_exchanged=False) -> None:
+    def __init__(self, structured=True, halo_size=1, ndim=1, tensor_used=False, double_precision=False, corner_exchanged=False) -> None:
         self.comm = None
         self.rank = 0
         self.num_process = 1
         self.rows, self.cols = 1, 1
         self.sub_nx, self.sub_ny, self.sub_nz = 0, 0, 0
+        self.topology_dim = -1
         self.neighbors = [-2] * 26  # suppose we support up to 3D, 26 neighbors
         self.current_vector = None
         self.current_matrix = None
@@ -30,21 +31,24 @@ class HaloExchange:
         # do we need to have the diagonally neighboring tiles exchanged
         self.is_corner_exchanged = corner_exchanged
         self.TOP, self.BOTTOM, self.LEFT, self.RIGHT, self.FRONT, self.BEHIND = 0, 0, 0, 0, 0, 0
-        
+
         if self.is_double_precision:
             self.data_type = MPI.DOUBLE_PRECISION
-        
+
     def __repr__(self):
         return f"""
         simultas.HaloExchange instance summary info:
         ===========================================
         [Number of processes] {self.num_process}
-        [Topology Dimension] ({self.sub_nx},{self.sub_ny},{self.sub_nz})
+        [Processor rank] {self.rank}
+        [Topology Dimension] {self.topology_dim}
+        [Subdomain shape] ({self.sub_nx+2}, {self.sub_ny+2}, {self.sub_nz+2})
+        [Connected neighbors] {[idx for idx in self.neighbors if idx != -2]}
         [Mesh dimension] {self.ndims}
         [Decomposed 1D domain] at {hex(id(self.current_vector))}
         [Decomposed 2D domain] at {hex(id(self.current_matrix))}
         [Decomposed 3D domain] at {hex(id(self.current_cuboid))}
-        [Halo Thickness] {self.halo_size} 
+        [Halo Layers] {self.halo_size} 
         [Structured Mesh] {self.structured_mesh}
         [Double Precision] {self.is_double_precision}
         [Corner neighboring tiles included] {self.is_corner_exchanged}
@@ -79,25 +83,28 @@ class HaloExchange:
         # convert to numpy array if it is tensor
         if tf.is_tensor(mesh):
             mesh = mesh.numpy()
-            
+
         # remove the extra one dimensions
         mesh = HaloExchange.remove_one_dims(mesh)
-        
+
         self.num_process = MPI.COMM_WORLD.Get_size()
-        
-        proc_grid_dim = (self.num_process, 1)  # default place_holder for 1D case
-        
+
+        # default place_holder for 1D case
+        proc_grid_dim = (self.num_process, 1)
+
         if mesh.ndim == 2:
             self.ndims = 2
             proc_grid_dim = HaloExchange.generate_proc_dim_2D(self.num_process)
         elif mesh.ndim == 3:
             self.ndims = 3
             proc_grid_dim = HaloExchange.generate_proc_dim_3D(self.num_process)
-            
+
         assert self.num_process > 1, f"[WARNING] Parallelisation involves 2 or more processes, otherwise run code without MPI (in serial)."
 
         # MPI initialization
-        self.mpi_init(proc_grid_dim, is_periodic,is_reordered)  # mpi initialization
+        self.topology_dim = proc_grid_dim
+        self.mpi_init(proc_grid_dim, is_periodic,
+                      is_reordered)  # mpi initialization
 
         # return the decomposed sub-domain
         if mesh.ndim == 1:
@@ -131,13 +138,15 @@ class HaloExchange:
         Returns:
             int, numpy array: single sub-domain shape, sub-domains
         """
-        self.LEFT = 0
-        self.RIGHT = 1
-        self.neighbors[self.LEFT], self.neighbors[self.RIGHT] = self.comm.Shift(0, 1)
+        self.LEFT, self.RIGHT = 0, 1
+        self.neighbors[self.LEFT], self.neighbors[self.RIGHT] = self.comm.Shift(
+            0, 1)
 
-        sub_domains = HaloExchange.domain_decomposition_strip(mesh.reshape(nx,), self.num_process)  # (1,x)
+        sub_domains = HaloExchange.domain_decomposition_strip(
+            mesh.reshape(nx,), self.num_process)  # (1,x)
         self.sub_nx = sub_domains[self.rank].shape[0]
-        self.current_vector = np.pad(sub_domains[self.rank], (self.halo_size, self.halo_size), "constant", constant_values=(0,))
+        self.current_vector = np.pad(
+            sub_domains[self.rank], (self.halo_size, self.halo_size), "constant", constant_values=(0,))
 
         return self.sub_nx, self.current_vector
 
@@ -154,10 +163,7 @@ class HaloExchange:
         Returns:
             int,int,numpy array: sub-domain shape x, sub-domain shape y, sub-domains
         """
-        self.TOP = 0
-        self.BOTTOM = 1
-        self.LEFT = 2
-        self.RIGHT = 3
+        self.TOP, self.BOTTOM, self.LEFT, self.RIGHT = 0, 1, 2, 3
 
         if proc_grid_dim[0] == 1 or proc_grid_dim[1] == 1:
             sub_domains = HaloExchange.domain_decomposition_strip(
@@ -193,21 +199,18 @@ class HaloExchange:
             int,int,int,numpy array: sub-domain shape x, sub-domain shape y, sub-domain shape z, sub-domains
         """
         # neighbor indices
-        self.LEFT = 0
-        self.RIGHT = 1
-        self.FRONT = 2
-        self.BEHIND = 3
-        self.TOP = 4
-        self.BOTTOM = 5
+        self.LEFT, self.RIGHT, self.FRONT, self.BEHIND, self.TOP, self.BOTTOM = 0, 1, 2, 3, 4, 5
 
         # edge case, if 1 process we do nothing
         if self.num_process == 1:
             return nx, ny, nz, mesh
 
-        sub_cubes = HaloExchange.domain_decomposition_cube(mesh.reshape(nx, ny, nz), proc_grid_dim)  # if it is numpy reshape directly
+        sub_cubes = HaloExchange.domain_decomposition_cube(mesh.reshape(
+            nx, ny, nz), proc_grid_dim)  # if it is numpy reshape directly
 
         # padding the halo grids
-        self.current_cuboid = np.pad(sub_cubes[self.rank], (self.halo_size, self.halo_size), 'constant', constant_values=(0,))
+        self.current_cuboid = np.pad(
+            sub_cubes[self.rank], (self.halo_size, self.halo_size), 'constant', constant_values=(0,))
 
         self.sub_nx, self.sub_ny, self.sub_nz = sub_cubes[0].shape
         # find neighbors (note here 0,1,2 are x,y,z coordinates respectively)
@@ -243,14 +246,14 @@ class HaloExchange:
 
         send_left = np.copy(np.ascontiguousarray(self.current_vector[1]))
         send_right = np.copy(np.ascontiguousarray(self.current_vector[-2]))
-        
-        [recv_right,recv_left] = self.halo_update_non_blocking(send_buffers=[send_left,send_right],neighbor_indices=[self.LEFT,self.RIGHT])
+
+        [recv_right, recv_left] = self.halo_update_non_blocking(send_buffers=[send_left, send_right], neighbor_indices=[self.LEFT, self.RIGHT])
 
         # TODO: multi-halo size
         if self.neighbors[self.RIGHT] != -2:
-            self.current_vector[-1] = recv_right
+            self.current_vector[-self.halo_size:] = recv_right
         if self.neighbors[self.LEFT] != -2:
-            self.current_vector[0] = recv_left
+            self.current_vector[0:self.halo_size] = recv_left
 
         if self.is_tensor_mesh:
             return tf.convert_to_tensor(self.current_vector.reshape(1, self.sub_nx, 1))
@@ -275,30 +278,35 @@ class HaloExchange:
 
         # remove trivial one dimensions
         if self.current_matrix.ndim > 2:
-            self.current_matrix = HaloExchange.remove_one_dims(self.current_matrix)
+            self.current_matrix = HaloExchange.remove_one_dims(
+                self.current_matrix)
 
         # get sub-domain shape
         self.sub_nx, self.sub_ny = self.current_matrix.shape
 
         # neighbor indices
-        self.TOP,self.BOTTOM,self.LEFT,self.RIGHT = 0,1,2,3
-        
-        # left and right
-        send_left = np.copy(np.ascontiguousarray(self.current_matrix[self.halo_size:-self.halo_size, self.halo_size:self.halo_size+self.halo_size])) # 2:-2, 2:4 
-        send_right = np.copy(np.ascontiguousarray(self.current_matrix[self.halo_size:-self.halo_size, -self.halo_size-self.halo_size:-self.halo_size])) # 2:-2,-4:-2
-        
-        [recv_right,recv_left] = self.halo_update_non_blocking(send_buffers=[send_left,send_right],neighbor_indices=[self.LEFT,self.RIGHT])
-        
-        if self.neighbors[self.RIGHT] != -2:
-            self.current_matrix[self.halo_size:-self.halo_size, -self.halo_size:] = recv_right
-        if self.neighbors[self.LEFT] != -2:
-            self.current_matrix[self.halo_size:-self.halo_size, 0:self.halo_size] = recv_left
+        self.TOP, self.BOTTOM, self.LEFT, self.RIGHT = 0, 1, 2, 3
 
-        send_top = np.copy(np.ascontiguousarray(self.current_matrix[self.halo_size:self.halo_size+self.halo_size, :])) 
-        send_bottom = np.copy(np.ascontiguousarray(self.current_matrix[-self.halo_size-self.halo_size:-self.halo_size, :])) 
-        
-        [recv_bottom,recv_top] = self.halo_update_non_blocking(send_buffers=[send_top,send_bottom],neighbor_indices=[self.TOP,self.BOTTOM])
-        
+        # left and right
+        send_left = np.copy(np.ascontiguousarray(self.current_matrix[self.halo_size:-self.halo_size, self.halo_size:self.halo_size+self.halo_size]))
+        send_right = np.copy(np.ascontiguousarray(self.current_matrix[self.halo_size:-self.halo_size, -self.halo_size-self.halo_size:-self.halo_size]))
+
+        [recv_right, recv_left] = self.halo_update_non_blocking(
+            send_buffers=[send_left, send_right], neighbor_indices=[self.LEFT, self.RIGHT])
+
+        if self.neighbors[self.RIGHT] != -2:
+            self.current_matrix[self.halo_size:-
+                                self.halo_size, -self.halo_size:] = recv_right
+        if self.neighbors[self.LEFT] != -2:
+            self.current_matrix[self.halo_size:-
+                                self.halo_size, 0:self.halo_size] = recv_left
+
+        send_top = np.copy(np.ascontiguousarray(self.current_matrix[self.halo_size:self.halo_size+self.halo_size, :]))
+        send_bottom = np.copy(np.ascontiguousarray(self.current_matrix[-self.halo_size-self.halo_size:-self.halo_size, :]))
+
+        [recv_bottom, recv_top] = self.halo_update_non_blocking(
+            send_buffers=[send_top, send_bottom], neighbor_indices=[self.TOP, self.BOTTOM])
+
         if self.neighbors[self.TOP] != -2:
             self.current_matrix[0:self.halo_size, :] = recv_top
         if self.neighbors[self.BOTTOM] != -2:
@@ -310,9 +318,9 @@ class HaloExchange:
 
         # return current_domain
         return self.current_matrix
-    
+
     # halo exchange in structured 3D
-    def structured_halo_update_3D(self,input_cube):
+    def structured_halo_update_3D(self, input_cube):
         """parallel updating of halos in 3D
 
         Args:
@@ -328,27 +336,18 @@ class HaloExchange:
             self.current_cuboid = np.copy(input_cube)
 
         if self.current_cuboid.ndim > 3:
-            self.current_cuboid = HaloExchange.remove_one_dims(self.current_cuboid)
+            self.current_cuboid = HaloExchange.remove_one_dims(
+                self.current_cuboid)
 
-        self.sub_nx, self.sub_ny,self.sub_nz = self.current_cuboid.shape
+        self.sub_nx, self.sub_ny, self.sub_nz = self.current_cuboid.shape
 
         # neighbor indices
-        self.LEFT,self.RIGHT,self.FRONT,self.BEHIND,self.TOP,self.BOTTOM = 0,1,2,3,4,5
+        self.LEFT, self.RIGHT, self.FRONT, self.BEHIND, self.TOP, self.BOTTOM = 0, 1, 2, 3, 4, 5
 
         sendbuffer_1 = np.copy(np.ascontiguousarray(self.current_cuboid[1:-1, 1, 1:-1]))
         sendbuffer_2 = np.copy(np.ascontiguousarray(self.current_cuboid[1:-1, -2, 1:-1]))
-        recvbuffer_1 = np.empty_like(sendbuffer_1)
-        recvbuffer_2 = np.empty_like(sendbuffer_2)
 
-        requests = []
-        requests.append(self.comm.Isend([sendbuffer_1,MPI.DOUBLE_PRECISION], dest=self.neighbors[self.FRONT]))
-        requests.append(self.comm.Isend([sendbuffer_2,MPI.DOUBLE_PRECISION], dest=self.neighbors[self.BEHIND]))
-        requests.append(self.comm.Irecv([recvbuffer_1,MPI.DOUBLE_PRECISION], source=self.neighbors[self.BEHIND]))
-        requests.append(self.comm.Irecv([recvbuffer_2,MPI.DOUBLE_PRECISION], source=self.neighbors[self.FRONT]))
-        MPI.Request.Waitall(requests)
-        requests.clear()
-        
-        # [recvbuffer_2,recvbuffer_1] = self.halo_update_non_blocking(send_buffers=[sendbuffer_1,sendbuffer_2],neighbor_indices=[self.FRONT,self.BEHIND])
+        [recvbuffer_1, recvbuffer_2] = self.halo_update_non_blocking(send_buffers=[sendbuffer_1, sendbuffer_2], neighbor_indices=[self.FRONT, self.BEHIND])
 
         # update front and behind
         if self.neighbors[self.FRONT] != -2:
@@ -358,18 +357,8 @@ class HaloExchange:
 
         sendbuffer_1 = np.copy(np.ascontiguousarray(self.current_cuboid[:, :, 1]))
         sendbuffer_2 = np.copy(np.ascontiguousarray(self.current_cuboid[:, :, -2]))
-        recvbuffer_1 = np.empty_like(sendbuffer_1)
-        recvbuffer_2 = np.empty_like(sendbuffer_2)
 
-        requests = []
-        requests.append(self.comm.Isend([sendbuffer_1,MPI.DOUBLE_PRECISION], dest=self.neighbors[self.LEFT]))
-        requests.append(self.comm.Isend([sendbuffer_2,MPI.DOUBLE_PRECISION], dest=self.neighbors[self.RIGHT]))
-        requests.append(self.comm.Irecv([recvbuffer_1,MPI.DOUBLE_PRECISION], source=self.neighbors[self.RIGHT]))
-        requests.append(self.comm.Irecv([recvbuffer_2,MPI.DOUBLE_PRECISION], source=self.neighbors[self.LEFT]))
-        MPI.Request.Waitall(requests)
-        requests.clear()
-        
-        # [recvbuffer_1,recvbuffer_2] = self.halo_update_non_blocking(send_buffers=[sendbuffer_1,sendbuffer_2],neighbor_indices=[self.LEFT,self.RIGHT])
+        [recvbuffer_1, recvbuffer_2] = self.halo_update_non_blocking(send_buffers=[sendbuffer_1, sendbuffer_2], neighbor_indices=[self.LEFT, self.RIGHT])
 
         if self.neighbors[self.LEFT] != -2:
             self.current_cuboid[:, :, 0] = recvbuffer_2
@@ -378,47 +367,40 @@ class HaloExchange:
 
         sendbuffer_1 = np.copy(np.ascontiguousarray(self.current_cuboid[-2, :, :]))
         sendbuffer_2 = np.copy(np.ascontiguousarray(self.current_cuboid[1, :, :]))
-        recvbuffer_1 = np.empty_like(sendbuffer_1)
-        recvbuffer_2 = np.empty_like(sendbuffer_2)
-        
-        # [recvbuffer_1,recvbuffer_2] = self.halo_update_non_blocking(send_buffers=[sendbuffer_1,sendbuffer_2],neighbor_indices=[self.TOP,self.BOTTOM])
 
-        requests.append(self.comm.Isend([sendbuffer_1,MPI.DOUBLE_PRECISION], dest=self.neighbors[self.TOP]))
-        requests.append(self.comm.Isend([sendbuffer_2,MPI.DOUBLE_PRECISION], dest=self.neighbors[self.BOTTOM]))
-        requests.append(self.comm.Irecv([recvbuffer_1,MPI.DOUBLE_PRECISION], source=self.neighbors[self.BOTTOM]))
-        requests.append(self.comm.Irecv([recvbuffer_2,MPI.DOUBLE_PRECISION], source=self.neighbors[self.TOP]))
-        MPI.Request.Waitall(requests)
-        requests.clear()
+        [recvbuffer_1, recvbuffer_2] = self.halo_update_non_blocking(send_buffers=[sendbuffer_1, sendbuffer_2], neighbor_indices=[self.TOP, self.BOTTOM])
 
         if self.neighbors[self.TOP] != -2:
             self.current_cuboid[-1, :, :] = recvbuffer_2
         if self.neighbors[self.BOTTOM] != -2:
             self.current_cuboid[0, :, :] = recvbuffer_1
-            
+
         if self.is_tensor_mesh:
             return tf.convert_to_tensor(self.current_cuboid.reshape(1, self.sub_nx, self.sub_ny, self.sub_nz, 1))
 
         return self.current_cuboid
-    
+
     # TODO: extract non-blocking p2p communications here
-    def halo_update_non_blocking(self,send_buffers,neighbor_indices):
+    def halo_update_non_blocking(self, send_buffers, neighbor_indices):
         updated_buffers = []
-        recv_buffer2 = np.empty_like(send_buffers[0])
-        recv_buffer1 = np.empty_like(send_buffers[1])
-        buffer_size = send_buffers[0].shape if self.ndims > 1 else 1
+        recv_buffer2 = np.zeros_like(send_buffers[0])
+        recv_buffer1 = np.zeros_like(send_buffers[1])
+        buffer_size = send_buffers[0].shape
+        if np.allclose(buffer_size, 1):
+            self.data_type = MPI.FLOAT
 
         # non-blocking module of mpi4py
         requests = []
-        requests.append(self.comm.Isend([send_buffers[0],buffer_size,self.data_type], dest=self.neighbors[neighbor_indices[0]]))
-        requests.append(self.comm.Isend([send_buffers[1],buffer_size,self.data_type], dest=self.neighbors[neighbor_indices[1]]))
-        requests.append(self.comm.Irecv([recv_buffer2,buffer_size,self.data_type], source=self.neighbors[neighbor_indices[1]]))
-        requests.append(self.comm.Irecv([recv_buffer1,buffer_size,self.data_type], source=self.neighbors[neighbor_indices[0]]))
+        requests.append(self.comm.Isend([send_buffers[0], self.data_type], dest=self.neighbors[neighbor_indices[0]]))
+        requests.append(self.comm.Isend([send_buffers[1], self.data_type], dest=self.neighbors[neighbor_indices[1]]))
+        requests.append(self.comm.Irecv([recv_buffer2, self.data_type], source=self.neighbors[neighbor_indices[1]]))
+        requests.append(self.comm.Irecv([recv_buffer1, self.data_type], source=self.neighbors[neighbor_indices[0]]))
         MPI.Request.Waitall(requests)
         requests.clear()
 
         updated_buffers.append(recv_buffer2)
         updated_buffers.append(recv_buffer1)
-            
+
         return updated_buffers
 
     ########## static methods which call without a instance of this class ##########
@@ -631,10 +613,8 @@ class HaloExchange:
         if sub_cube.ndim > 3:
             sub_cube = HaloExchange.remove_one_dims(sub_cube)
 
-        # nx, ny, nz = sub_cube.shape
-
         # note padding halo values with 0 by default
-        return np.pad(sub_cube, (halo_size, halo_size),'constant', constant_values=(halo_val,))
+        return np.pad(sub_cube, (halo_size, halo_size), 'constant', constant_values=(halo_val,))
 
     @staticmethod
     def remove_one_dims(mesh):
@@ -654,4 +634,4 @@ class HaloExchange:
                 break
         return mesh
 
-############################## NEW MODIFICATIONS BELOW ##############################        
+############################## NEW MODIFICATIONS BELOW ##############################

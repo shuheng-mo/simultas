@@ -84,7 +84,6 @@ rank = he.rank # get the process rank
 
 # update halo once as the start
 current_domain = he.structured_halo_update_3D(current_domain)
-# print(current_domain.shape)
 current_domain = current_domain.numpy().reshape(sub_nx+2, sub_ny+2, sub_nz+2)
 
 #============================== Initialization CNN layers ==================================#
@@ -355,6 +354,9 @@ for multi_grid in range(multi_itr):
     tempVal = tempVal - CNN3D_A_66(values)/w2[0,1,1,1,0] + b/w2[0,1,1,1,0]
     values = he.padding_block_halo_3D(tempVal,1)
     values = he.structured_halo_update_3D(values)
+    
+    if he.rank == 0:
+      print('[MULTI-GRID] ',multi_grid)
     
 end_time = perf_counter()
 
