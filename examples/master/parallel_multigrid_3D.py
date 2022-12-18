@@ -167,7 +167,7 @@ CNN3D_A_4 = keras.models.Sequential([
 
 CNN3D_A_3 = keras.models.Sequential([
          keras.layers.InputLayer(input_shape=(3, 3, 3, 1)),
-         tf.keras.layers.Conv3D(1, kernel_size=3, strides=1, padding='SAME',         # A matrix
+         tf.keras.layers.Conv3D(1, kernel_size=3, strides=1, padding='VALID',         # A matrix
                                 kernel_initializer=kernel_initializer_2,
                                 bias_initializer=bias_initializer),
 ])
@@ -280,7 +280,7 @@ values = temp1
 
 # b = values # only for one time step
 b = tf.reshape(values[0,1:-1,1:-1,1:-1,0],(1,sub_nx,sub_ny,sub_ny,1))           # only for one time step
-multi_itr = 100
+multi_itr = 2
 j_itr = 1 # Jacobi iteration number
 
 
@@ -289,21 +289,32 @@ for multi_grid in range(multi_itr):
     w = np.zeros([1,1,1,1,1])
     r = CNN3D_A_66(values) - b # compute the residual
     
-    # np.save('parallel_residuals/parallel_multigrid_3d_res_{}'.format(rank),r)
+    # np.save('residuals/parallel_residual_{}.npy'.format(rank),r)
     
     # r_64 = CNN3D_res_128(r) 
     r_32 = CNN3D_res_64(r) # 128
+    # np.save('residuals/parallel_residual_{}.npy'.format(rank),r_32)
     r_16 = CNN3D_res_32(r_32) # 64
+    # np.save('residuals/parallel_residual_{}.npy'.format(rank),r_16)
     r_8 = CNN3D_res_16(r_16) # 32
+    # np.save('residuals/parallel_residual_{}.npy'.format(rank),r_8)
     r_4 = CNN3D_res_8(r_8) # 16
+    # np.save('residuals/parallel_residual_{}.npy'.format(rank),r_4)
     r_2 = CNN3D_res_4(r_4) # 8
+    # np.save('residuals/parallel_residual_{}.npy'.format(rank),r_2)
     r_1 = CNN3D_res_2(r_2) # 4
+    
+    np.save('residuals/parallel_residual_{}.npy'.format(rank),r_1)
 
     # I suppose here is the proess of Jacobi smoothing followed by prolongation (and correction)
+    # w_t0 = he.padding_block_halo_3D(w,1)
+    # w_t0 = he.structured_halo_update_3D(w_t0)
+    # print(w_t0.shape)
+    # temp0 = CNN3D_A_3(w_t0)
     for Jacobi in range(j_itr):
         w = w - CNN3D_A_1(w)/w2[0,1,1,1,0] + r_1/w2[0,1,1,1,0]
-    w = w - CNN3D_A_1(w)/w2[0,1,1,1,0] + r_1/w2[0,1,1,1,0]
-
+    # w = w - CNN3D_A_1(w)/w2[0,1,1,1,0] + r_1/w2[0,1,1,1,0]
+    
     w_2 = CNN3D_prol_1(w)
     w_t1 = he.padding_block_halo_3D(w_2,1)
     w_t1 = he.structured_halo_update_3D(w_t1)
