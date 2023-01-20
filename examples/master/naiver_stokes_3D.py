@@ -421,6 +421,9 @@ def boundary_condition_velocity(values_u, values_v, values_w, nx):
     tempu = tf.Variable(values_u)
     tempv = tf.Variable(values_v)
     tempw = tf.Variable(values_w)
+    
+    print(tempu[0, :, :, 0, 0].shape)
+    print(tf.Variable(tf.ones((1, nx, nx)))[0, :].shape)
 
     tempu[0, :, :, 0, 0].assign(tf.Variable(tf.ones((1, nx, nx)))[0, :]*ub)
     tempv[0, :, :, 0, 0].assign(tf.Variable(tf.zeros((1, nx, nx)))[0, :])
@@ -547,6 +550,7 @@ for itime in range(ntime):
 # ------------------ Boundary conditions ----------------------
     [values_u, values_v, values_w] = boundary_condition_velocity(
         values_u, values_v, values_w, nx)
+    break
     values_p = boundary_condition_pressure(values_p, nx)
 # -------------------------------------------------------------
 

@@ -88,33 +88,32 @@ class HaloExchange:
 
         # remove the extra one dimensions
         mesh = HaloExchange.remove_one_dims(mesh,expected_dim=self.ndims)
-
         self.num_process = MPI.COMM_WORLD.Get_size()
 
         # default place_holder for 1D case
-        proc_grid_dim = (self.num_process, 1)
+        self.topology_dim = (self.num_process, 1)
 
         if mesh.ndim == 2:
             self.ndims = 2
-            proc_grid_dim = HaloExchange.generate_proc_dim_2D(self.num_process)
+            self.topology_dim = HaloExchange.generate_proc_dim_2D(self.num_process)
         elif mesh.ndim == 3:
             self.ndims = 3
-            proc_grid_dim = HaloExchange.generate_proc_dim_3D(self.num_process)
+            self.topology_dim = HaloExchange.generate_proc_dim_3D(self.num_process)
 
         assert self.num_process > 1, f"[WARNING] Parallelisation involves 2 or more processes, otherwise run code without MPI (in serial)."
 
         # MPI initialization
-        self.topology_dim = proc_grid_dim
-        self.mpi_init(proc_grid_dim, is_periodic,
-                      is_reordered)  # mpi initialization
+        self.mpi_init(self.topology_dim, is_periodic, is_reordered)  # mpi initialization
+        
+        print(f'[INFO] Processor {self.rank} activated !')
 
         # return the decomposed sub-domain
         if mesh.ndim == 1:
             return self.domain_decomposition_1D(mesh, mesh.shape[0])
         elif mesh.ndim == 2:
-            return self.domain_decomposition_2D(mesh, mesh.shape[0], mesh.shape[1], proc_grid_dim)
+            return self.domain_decomposition_2D(mesh, mesh.shape[0], mesh.shape[1], self.topology_dim)
         elif mesh.ndim == 3:
-            return self.domain_decomposition_3D(mesh, mesh.shape[0], mesh.shape[1], mesh.shape[2], proc_grid_dim)
+            return self.domain_decomposition_3D(mesh, mesh.shape[0], mesh.shape[1], mesh.shape[2], self.topology_dim)
 
         # for dimensions > 3, return nothing for now
         return NotImplementedError()
@@ -203,7 +202,7 @@ class HaloExchange:
             return nx, ny, nz, mesh
 
         sub_cubes = HaloExchange.domain_decomposition_cube(mesh.reshape(nx, ny, nz), proc_grid_dim)  # if it is numpy reshape directly
-
+        
         # padding the halo grids
         self.current_cuboid = np.pad(sub_cubes[self.rank], (self.halo_size, self.halo_size), 'constant', constant_values=(0,))
 
@@ -444,6 +443,9 @@ class HaloExchange:
                     min_gap = gap
                     rows = i
                     cols = int(num_process / i)
+                    
+        if rows == 1 or cols==1:
+            return (-1,-1)
 
         return (rows, cols)
 
@@ -471,7 +473,7 @@ class HaloExchange:
                 left = mid + 0.01
 
         if left**3 != num_process:
-            return (-1, -1, -1)
+            return (num_process,1)
 
         return (left, left, left)
 

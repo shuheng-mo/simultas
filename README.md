@@ -119,6 +119,21 @@ _Below is an example of how you can instruct your audience on installing and set
     # this should return hello from 2048 processes
     ```
 
+- Sometimes on macOS we might see an initialization error like this:
+  ```
+  A system call failed during shared memory initialization that should
+  not have.  It is likely that your MPI job will now either abort or
+  experience performance degradation.
+
+  Local host:  XXXXXX
+  System call: XXXXXX
+  Error:       No such file or directory (errno 2)
+  ```
+  to tackle this issue, a quick solution is to use:
+  ```bash
+  export TMPDIR=/tmp
+  ```
+  run and activate `.zshrc` might solve this problem.
 <p align="right">(<a href="#top">BACK TO TOP</a>)</p>
 
 
