@@ -81,7 +81,18 @@ class HaloExchange:
         # TODO: Other topologies if we need
 
     # TODO: make the init func do much work as possible
-    def initialization(self, mesh, is_periodic=False, is_reordered=False):
+    def initialization(self, mesh, topology=None, is_periodic=False, is_reordered=False):
+        """_summary_
+
+        Args:
+            mesh (_type_): _description_
+            topology (_type_, optional): _description_. Defaults to None.product of topology equals to the number of processes
+            is_periodic (bool, optional): _description_. Defaults to False.
+            is_reordered (bool, optional): _description_. Defaults to False.
+
+        Returns:
+            NotImplementedError()
+        """
         # convert to numpy array if it is tensor
         if tf.is_tensor(mesh):
             mesh = mesh.numpy()
@@ -90,15 +101,18 @@ class HaloExchange:
         mesh = HaloExchange.remove_one_dims(mesh,expected_dim=self.ndims)
         self.num_process = MPI.COMM_WORLD.Get_size()
 
-        # default place_holder for 1D case
-        self.topology_dim = (self.num_process, 1)
+        if topology == None:
+            # default place_holder for 1D case
+            self.topology_dim = (self.num_process, 1)
 
-        if mesh.ndim == 2:
-            self.ndims = 2
-            self.topology_dim = HaloExchange.generate_proc_dim_2D(self.num_process)
-        elif mesh.ndim == 3:
-            self.ndims = 3
-            self.topology_dim = HaloExchange.generate_proc_dim_3D(self.num_process)
+            if mesh.ndim == 2:
+                self.ndims = 2
+                self.topology_dim = HaloExchange.generate_proc_dim_2D(self.num_process)
+            elif mesh.ndim == 3:
+                self.ndims = 3
+                self.topology_dim = HaloExchange.generate_proc_dim_3D(self.num_process)
+        else:
+            self.topology_dim = topology
 
         assert self.num_process > 1, f"[WARNING] Parallelisation involves 2 or more processes, otherwise run code without MPI (in serial)."
 
