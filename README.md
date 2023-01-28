@@ -134,6 +134,7 @@ _Below is an example of how you can instruct your audience on installing and set
   export TMPDIR=/tmp
   ```
   run and activate `.zshrc` might solve this problem.
+- When you do not have enough slots for a certain MPI process number use `--oversubscribe` flag. To run MPI code without Sudo permissions, use `--allow-run-as-root` flag before `mpiexec` or `mpirun`.
 <p align="right">(<a href="#top">BACK TO TOP</a>)</p>
 
 
@@ -159,7 +160,7 @@ _, _, _ =  he.initialization()
 problem_mesh = np.array() # or tensor of tensorflow
 problem_mesh = he.strctured_halo_update_1D(problem_mesh)
 
-
+mpiexec --oversubscribe -n 16 python test.py
 ```
 
 <p align="right">(<a href="#top">BACK TO TOP</a>)</p>
