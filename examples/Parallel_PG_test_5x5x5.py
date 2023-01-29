@@ -129,14 +129,6 @@ kernel_initializer_adv_z_3 = tf.keras.initializers.constant(w4)
 
 bias_initializer = tf.keras.initializers.constant(np.zeros((1,)))
 
-# Initialise
-#################### Create field #####£###############
-input_shape = (1,nz,ny,nx,1)
-values_u = tf.zeros(input_shape)
-values_v = tf.zeros(input_shape)
-values_w = tf.zeros(input_shape)
-values_p = tf.zeros(input_shape)
-#######################################################
 ################# Numerical parameters ################
 multi_itr = 4               # Iterations of multi-grid 
 j_itr = 1                   # Iterations of Jacobi 
@@ -177,27 +169,31 @@ if Restart == True:
     ctime_old = nrestart*dt
     print('Restart solver!')
 #######################################################    
+
+# Omit these solvers
 ################# Only for scalar #####################
-if LSCALAR == True:
-    alpha = np.zeros(input_shape).astype('float32')
-    alpha[0,0:64,:,:,0] = 0
-    alpha[0,64:128,:,:,0] = 1.0
-    alpha = tf.convert_to_tensor(alpha)
-    print('Switch on scalar filed solver!')
-#######################################################
-################# Only for scalar #####################
-if LMTI == True:
-    rho = tf.zeros(input_shape)
-    rho = alpha*rho_l + (1-alpha)*rho_g
-    print('Solving multiphase flows!')
-else:
-    rho = tf.ones(input_shape)
-    # print('Solving single-phase flows!')
+# if LSCALAR == True:
+#     alpha = np.zeros(input_shape).astype('float32')
+#     alpha[0,0:64,:,:,0] = 0
+#     alpha[0,64:128,:,:,0] = 1.0
+#     alpha = tf.convert_to_tensor(alpha)
+#     print('Switch on scalar filed solver!')
+# #######################################################
+# ################# Only for scalar #####################
+# if LMTI == True:
+#     rho = tf.zeros(input_shape)
+#     rho = alpha*rho_l + (1-alpha)*rho_g
+#     print('Solving multiphase flows!')
+# else:
+#     rho = tf.ones(input_shape)
+#     # print('Solving single-phase flows!')
+
+
 ################# Only for IBM ########################
 if LIBM == True:
     # mesh = np.load('../Mesh_SK_London/INHALE_640.npy')
     mesh = np.load('master/mesh_64_sk.npy') # replace with 128x128x128 case
-    sigma = np.zeros(input_shape).astype('float32')
+    sigma = np.zeros((1,nz,nx,ny,1)).astype('float32')
     for i in range(1,nx-1):
         for j in range(1,ny-1):
             for k in range(1,nz-1):
@@ -216,10 +212,8 @@ if LIBM == True:
 # MPI initialization (this time the discretization kernel size 5x5x5,halo_size set to 2)
 he = HaloExchange(structured=True, halo_size=2, tensor_used=True,double_precision=True, corner_exchanged=True)
 sub_nx, sub_ny, sub_nz, current_domain = he.initialization(sigma, is_periodic=False, is_reordered=False)
-sub_x, sub_y, sub_z = sub_nx+2, sub_ny+2, sub_nz+2
-
+sub_x, sub_y, sub_z = sub_nx+4, sub_ny+4, sub_nz+4 # halo_size*2
 # print(current_domain.shape) # here each sub-domain's shape is (68,68,68)
-print(sub_x,sub_y,sub_z)
 
 current_domain = he.structured_halo_update_3D(current_domain)
 current_domain = current_domain.numpy()
@@ -233,143 +227,162 @@ BEHIND = 3
 TOP = 4
 BOTTOM = 5
 
+#################### Create field #####£###############
+input_shape = (1,sub_z,sub_x,sub_y,1)
+values_u = tf.zeros(input_shape)
+values_v = tf.zeros(input_shape)
+values_w = tf.zeros(input_shape)
+values_p = tf.zeros(input_shape)
+
 # Libraries for solving momentum equation
 central_xadv_3th = keras.models.Sequential([
          keras.layers.InputLayer(input_shape=(sub_z, sub_y, sub_x, 1)),
-         tf.keras.layers.Conv3D(1, kernel_size=3, strides=1, padding='SAME',
+         tf.keras.layers.Conv3D(1, kernel_size=3, strides=1, padding='VALID',
                                 kernel_initializer=kernel_initializer_adv_x_3,
                                 bias_initializer=bias_initializer),
 ])
 
 central_yadv_3th = keras.models.Sequential([
          keras.layers.InputLayer(input_shape=(sub_z, sub_y, sub_x, 1)),
-         tf.keras.layers.Conv3D(1, kernel_size=3, strides=1, padding='SAME',
+         tf.keras.layers.Conv3D(1, kernel_size=3, strides=1, padding='VALID',
                                 kernel_initializer=kernel_initializer_adv_y_3,
                                 bias_initializer=bias_initializer),
 ])
 
 central_zadv_3th = keras.models.Sequential([
          keras.layers.InputLayer(input_shape=(sub_z, sub_y, sub_x, 1)),
-         tf.keras.layers.Conv3D(1, kernel_size=3, strides=1, padding='SAME',
+         tf.keras.layers.Conv3D(1, kernel_size=3, strides=1, padding='VALID',
                                 kernel_initializer=kernel_initializer_adv_z_3,
                                 bias_initializer=bias_initializer),
 ])
 
 central_dif_5th = keras.models.Sequential([
          keras.layers.InputLayer(input_shape=(sub_z, sub_y, sub_x, 1)),
-         tf.keras.layers.Conv3D(1, kernel_size=5, strides=1, padding='SAME',
+         tf.keras.layers.Conv3D(1, kernel_size=5, strides=1, padding='VALID',
                                 kernel_initializer=kernel_initializer_D,
                                 bias_initializer=bias_initializer),
 ])
 
 central_xadv_5th = keras.models.Sequential([
          keras.layers.InputLayer(input_shape=(sub_z, sub_y, sub_x, 1)),
-         tf.keras.layers.Conv3D(1, kernel_size=5, strides=1, padding='SAME',
+         tf.keras.layers.Conv3D(1, kernel_size=5, strides=1, padding='VALID',
                                 kernel_initializer=kernel_initializer_adv_x,
                                 bias_initializer=bias_initializer),
 ])
 
 central_yadv_5th = keras.models.Sequential([
          keras.layers.InputLayer(input_shape=(sub_z, sub_y, sub_x, 1)),
-         tf.keras.layers.Conv3D(1, kernel_size=5, strides=1, padding='SAME',
+         tf.keras.layers.Conv3D(1, kernel_size=5, strides=1, padding='VALID',
                                 kernel_initializer=kernel_initializer_adv_y,
                                 bias_initializer=bias_initializer),
 ])
 
 central_zadv_5th = keras.models.Sequential([
          keras.layers.InputLayer(input_shape=(sub_z, sub_y, sub_x, 1)),
-         tf.keras.layers.Conv3D(1, kernel_size=5, strides=1, padding='SAME',
+         tf.keras.layers.Conv3D(1, kernel_size=5, strides=1, padding='VALID',
                                 kernel_initializer=kernel_initializer_adv_z,
                                 bias_initializer=bias_initializer),
 ])
 
 # Libraries for multigrid algorithms
-for i in range(nlevel):
-    locals()['CNN3D_A_'+str(2**i)] = keras.models.Sequential([
-         keras.layers.InputLayer(input_shape=(int(nz*0.5**(nlevel-1-i)), int(ny*0.5**(nlevel-1-i)), int(nx*0.5**(nlevel-1-i)), 1)),
-         tf.keras.layers.Conv3D(1, kernel_size=5, strides=1, padding='SAME',         
-                                kernel_initializer=kernel_initializer_A_mg,
-                                bias_initializer=bias_initializer)
-    ])
+# for i in range(nlevel):
+#     locals()['CNN3D_A_'+str(2**i)] = keras.models.Sequential([
+#          keras.layers.InputLayer(input_shape=(int(nz*0.5**(nlevel-1-i)), int(ny*0.5**(nlevel-1-i)), int(nx*0.5**(nlevel-1-i)), 1)),
+#          tf.keras.layers.Conv3D(1, kernel_size=5, strides=1, padding='VALID',         
+#                                 kernel_initializer=kernel_initializer_A_mg,
+#                                 bias_initializer=bias_initializer)
+#     ])
     
-for i in range(nlevel-1):
-    locals()['restrict_'+str(2**(i+1))] = keras.models.Sequential([
-         keras.layers.InputLayer(input_shape=(int(nz*0.5**(nlevel-2-i)), int(ny*0.5**(nlevel-2-i)), int(nx*0.5**(nlevel-2-i)), 1)),
-         tf.keras.layers.Conv3D(1, kernel_size=2, strides=2, padding='VALID',  # restriction
-                                kernel_initializer=kernel_initializer_w_res,
-                                bias_initializer=bias_initializer),   
-    ])    
+# for i in range(nlevel-1):
+#     locals()['restrict_'+str(2**(i+1))] = keras.models.Sequential([
+#          keras.layers.InputLayer(input_shape=(int(nz*0.5**(nlevel-2-i)), int(ny*0.5**(nlevel-2-i)), int(nx*0.5**(nlevel-2-i)), 1)),
+#          tf.keras.layers.Conv3D(1, kernel_size=2, strides=2, padding='VALID',  # restriction
+#                                 kernel_initializer=kernel_initializer_w_res,
+#                                 bias_initializer=bias_initializer),   
+#     ])    
     
-for i in range(nlevel-1):
-    locals()['prolongate_'+str(2**i)] = keras.models.Sequential([
-         keras.layers.InputLayer(input_shape=(1*2**i, 1*ratio*2**i, 1*ratio*2**i, 1)),
-         tf.keras.layers.UpSampling3D(size=(2, 2, 2)),
-    ])
+# for i in range(nlevel-1):
+#     locals()['prolongate_'+str(2**i)] = keras.models.Sequential([
+#          keras.layers.InputLayer(input_shape=(1*2**i, 1*ratio*2**i, 1*ratio*2**i, 1)),
+#          tf.keras.layers.UpSampling3D(size=(2, 2, 2)),
+#     ])
     
 # Functions linking to the AI libraries
-def boundary_condition_velocity(values_u,values_v,values_w):
+def boundary_condition_velocity(values_u,values_v,values_w,nx,ny,nz):
     'Define boundary conditions for velocity field'
     tempu = tf.Variable(values_u)
     tempv = tf.Variable(values_v)   
-    tempw = tf.Variable(values_w) 
+    tempw = tf.Variable(values_w)
     
-    # print(tempu[0,:,:,0:2,0].shape)
-    
-    tempu[0,:,:,0:2,0].assign(tf.Variable(tf.ones((nz,ny,2)))*ub) 
-    tempv[0,:,:,0:2,0].assign(tf.Variable(tf.zeros((nz,ny,2))))    
-    tempw[0,:,:,0:2,0].assign(tf.Variable(tf.zeros((nz,ny,2))))   
+    # shape (nz,nx,ny), with halo size 2, we have to modify something
 
-    tempu[0,:,:,nx-2:nx,0].assign(tf.Variable(tf.ones((nz,ny,2)))*ub) 
-    tempv[0,:,:,nx-2:nx,0].assign(tf.Variable(tf.zeros((nz,ny,2))))   
-    tempw[0,:,:,nx-2:nx,0].assign(tf.Variable(tf.zeros((nz,ny,2))))  
-    
-    tempu[0,:,0,:,0].assign(tf.Variable(values_u)[0,:,2,:,0]) 
-    tempu[0,:,1,:,0].assign(tf.Variable(values_u)[0,:,2,:,0]) 
-    tempv[0,:,0:2,:,0].assign(tf.Variable(tf.zeros((nz,2,nx))))  
-    tempw[0,:,0:2,:,0].assign(tf.Variable(tf.zeros((nz,2,nx))))  
+    if neighbors[LEFT] == -2:
+        tempu[0,2:-2,2:-2,1:3,0].assign(tf.Variable(tf.ones((nz,nx,2)))*ub) 
+        tempv[0,2:-2,2:-2,1:3,0].assign(tf.Variable(tf.zeros((nz,nx,2))))    
+        tempw[0,2:-2,2:-2,1:3,0].assign(tf.Variable(tf.zeros((nz,nx,2))))    
         
-    tempu[0,:,nx-1,:,0].assign(tf.Variable(values_u)[0,:,nx-3,:,0])    
-    tempu[0,:,nx-2,:,0].assign(tf.Variable(values_u)[0,:,nx-3,:,0])    
-    tempv[0,:,nx-2:nx,:,0].assign(tf.Variable(tf.zeros((nz,2,nx))))     
-    tempw[0,:,nx-2:nx,:,0].assign(tf.Variable(tf.zeros((nz,2,nx))))  
+    if neighbors[RIGHT] == -2:
+        tempu[0,2:-2,2:-2,ny-3:ny-1,0].assign(tf.Variable(tf.ones((nz,nx,2)))*ub) 
+        tempv[0,2:-2,2:-2,ny-3:ny-1,0].assign(tf.Variable(tf.zeros((nz,nx,2))))   
+        tempw[0,2:-2,2:-2,ny-3:ny-1,0].assign(tf.Variable(tf.zeros((nz,nx,2))))
+        
+    if neighbors[FRONT] == -2:
+        tempu[0, 2:-2, 1, 2:-2, 0].assign(tf.Variable(values_u)[0, 2:-2, 3, 2:-2, 0])
+        tempu[0, 2:-2, 2, 2:-2, 0].assign(tf.Variable(values_u)[0, 2:-2, 3, 2:-2, 0])
+        tempv[0, 2:-2, 1:3, 2:-2, 0].assign(tf.Variable(tf.zeros((nz,2,ny))))  
+        tempw[0, 2:-2, 1:3, 2:-2, 0].assign(tf.Variable(tf.zeros((nz,2,ny))))  
+        
+    if neighbors[BEHIND] == -2:
+        tempu[0, 2:-2, nx, 2:-2, 0].assign(tf.Variable(values_u)[0, 2:-2, nx-2, 2:-2, 0])
+        tempu[0,2:-2, nx-1, 2:-2,0].assign(tf.Variable(values_u)[0,2:-2,nx-2,2:-2,0])    
+        tempv[0,2:-2,nx-2:nx,2:-2,0].assign(tf.Variable(tf.zeros((nz,2,ny))))     
+        tempw[0,2:-2,nx-2:nx,2:-2,0].assign(tf.Variable(tf.zeros((nz,2,ny))))     
+
+    if neighbors[BOTTOM] == -2:
+        tempu[0, 1:3, 2:-2, 2:-2, 0].assign(tf.Variable(tf.zeros((2,nx,ny))))
+        tempv[0, 1:3, 2:-2, 2:-2, 0].assign(tf.Variable(tf.zeros((2,nx,ny))))
+        tempw[0, 1:3, 2:-2, 2:-2, 0].assign(tf.Variable(tf.zeros((2,nx,ny))))
+        
+    if neighbors[TOP] == -2:
+        tempu[0,nz-1,2:-2,2:-2,0].assign(tf.Variable(values_u)[0,nz-3,2:-2,2:-2,0])
+        tempu[0,nz-2,2:-2,2:-2,0].assign(tf.Variable(values_u)[0,nz-3,2:-2,2:-2,0])
+        tempv[0,nz-1,2:-2,2:-2,0].assign(tf.Variable(values_v)[0,nz-3,2:-2,2:-2,0])
+        tempv[0,nz-2,2:-2,2:-2,0].assign(tf.Variable(values_v)[0,nz-3,2:-2,2:-2,0])
+        tempw[0,nz-2:nz,2:-2,2:-2,0].assign(tf.Variable(tf.zeros((2,nx,ny))))    
     
-    tempu[0,0:2,:,:,0].assign(tf.Variable(tf.zeros((2,ny,nx))))     
-    tempv[0,0:2,:,:,0].assign(tf.Variable(tf.zeros((2,ny,nx))))  
-    tempw[0,0:2,:,:,0].assign(tf.Variable(tf.zeros((2,ny,nx))))  
- 
-    tempu[0,nz-1,:,:,0].assign(tf.Variable(values_u)[0,nz-3,:,:,0])   
-    tempu[0,nz-2,:,:,0].assign(tf.Variable(values_u)[0,nz-3,:,:,0])       
-    tempv[0,nz-1,:,:,0].assign(tf.Variable(values_v)[0,nz-3,:,:,0]) 
-    tempv[0,nz-2,:,:,0].assign(tf.Variable(values_v)[0,nz-3,:,:,0])       
-    tempw[0,nz-2:nz,:,:,0].assign(tf.Variable(tf.zeros((2,ny,nx))))      
     return tempu,tempv,tempw
 
-def boundary_condition_pressure(values_p,nx):
+def boundary_condition_pressure(values_p,nx,ny,nz):
     'Define boundary conditions for pressure field'
-    tempp = tf.Variable(values_p)   
-    tempp[0,:,:,nx-2:nx,0].assign(tf.Variable(tf.zeros((nz,ny,2)))) 
-    tempp[0,:,:,0,0].assign(tf.Variable(values_p)[0,:,:,2,0]) 
-    tempp[0,:,:,1,0].assign(tf.Variable(values_p)[0,:,:,2,0])     
+    tempp = tf.Variable(values_p)
+       
+    if neighbors[RIGHT] == -2:
+        tempp[0,2:-2,2:-2,nx-2:nx,0].assign(tf.Variable(tf.zeros((nz,nx,2)))) 
+    if neighbors[LEFT] == -2:
+        tempp[0,2:-2,2:-2,0,0].assign(tf.Variable(values_p)[0,2:-2,2:-2,2,0]) 
+        tempp[0,2:-2,2:-2,1,0].assign(tf.Variable(values_p)[0,2:-2,2:-2,2,0])     
     
-    tempp[0,:,0,:,0].assign(tf.Variable(values_p)[0,:,2,:,0]) 
-    tempp[0,:,1,:,0].assign(tf.Variable(values_p)[0,:,2,:,0])     
-    tempp[0,:,nx-1,:,0].assign(tf.Variable(values_p)[0,:,nx-3,:,0])  
-    tempp[0,:,nx-2,:,0].assign(tf.Variable(values_p)[0,:,nx-3,:,0]) 
+    if neighbors[FRONT] == -2:
+        tempp[0,2:-2,0,2:-2,0].assign(tf.Variable(values_p)[0,2:-2,2,2:-2,0])
+    if neighbors[BEHIND] == -2:  
+        tempp[0,2:-2,1,2:-2,0].assign(tf.Variable(values_p)[0,2:-2,2,2:-2,0])    
+        tempp[0,2:-2,nx-1,2:-2,0].assign(tf.Variable(values_p)[0,2:-2,nx-3,2:-2,0])  
+        tempp[0,2:-2,nx-2,2:-2,0].assign(tf.Variable(values_p)[0,2:-2,nx-3,2:-2,0]) 
 
+    if neighbors[BOTTOM] == -2:
+        tempp[0,0,2:-2,2:-2,0].assign(tf.Variable(values_p)[0,2,2:-2,2:-2,0]) 
+        tempp[0,1,2:-2,2:-2,0].assign(tf.Variable(values_p)[0,2,2:-2,2:-2,0])
+         
+    if neighbors[TOP] == -2:
+        tempp[0,nz-1,2:-2,2:-2,0].assign(tf.Variable(values_p)[0,nz-3,2:-2,2:-2,0])    
+        tempp[0,nz-2,2:-2,2:-2,0].assign(tf.Variable(values_p)[0,nz-3,2:-2,2:-2,0]) 
     
-    tempp[0,0,:,:,0].assign(tf.Variable(values_p)[0,2,:,:,0]) 
-    tempp[0,1,:,:,0].assign(tf.Variable(values_p)[0,2,:,:,0])     
-    tempp[0,nz-1,:,:,0].assign(tf.Variable(values_p)[0,nz-3,:,:,0])    
-    tempp[0,nz-2,:,:,0].assign(tf.Variable(values_p)[0,nz-3,:,:,0]) 
-    
-    
-#     tempp[0,:,:,0:2,0].assign(tf.Variable(values_p)[0,:,:,2,0])
-    
-#     tempp[0,:,0:2,:,0].assign(tf.Variable(values_p)[0,:,2,:,0])     
-#     tempp[0,:,nx-2:nx,:,0].assign(tf.Variable(values_p)[0,:,nx-3,:,0]) 
-    
-#     tempp[0,0:2,:,:,0].assign(tf.Variable(values_p)[0,2,:,:,0])     
-#     tempp[0,nz-2:nz,:,:,0].assign(tf.Variable(values_p)[0,nz-3,:,:,0])  
+    # omitted section    
+    # tempp[0,:,:,0:2,0].assign(tf.Variable(values_p)[0,:,:,2,0])
+    # tempp[0,:,0:2,:,0].assign(tf.Variable(values_p)[0,:,2,:,0])     
+    # tempp[0,:,nx-2:nx,:,0].assign(tf.Variable(values_p)[0,:,nx-3,:,0]) 
+    # tempp[0,0:2,:,:,0].assign(tf.Variable(values_p)[0,2,:,:,0])     
+    # tempp[0,nz-2:nz,:,:,0].assign(tf.Variable(values_p)[0,nz-3,:,:,0])  
     return tempp
 
 def boundary_condition_indicator(alpha,nx):   
@@ -507,9 +520,6 @@ def Petrov_Galerkin_dissipation_high(values_u, values_v, values_w, eplsion_k, si
                      (eplsion_k+(abs(central_xadv_5th(values_w))+ \
                       abs(central_yadv_5th(values_w))+abs(central_zadv_5th(values_w)))/3)
     
-    
-    
-    
 #     k_v = 40 * 0.25 * abs(1/3*
 #                                (abs(values_u) + abs(values_v) + abs(values_w)) * 
 #                                central_dif_5th(values_v)) / (eplsion_k + 
@@ -549,11 +559,11 @@ def Petrov_Galerkin_dissipation_high(values_u, values_v, values_w, eplsion_k, si
 start = time.time()
 # 5 timesteps in total
 for itime in range(1,ntime+1): 
-    break
     ctime = ctime + dt 
     #####################################################################################
-    [values_u,values_v,values_w] = boundary_condition_velocity(values_u,values_v,values_w)
-    values_p = boundary_condition_pressure(values_p,nx)# Petrov-Galerkin dissipation
+    [values_u,values_v,values_w] = boundary_condition_velocity(values_u,values_v,values_w,sub_nx,sub_ny,sub_nz)
+    values_p = boundary_condition_pressure(values_p,sub_nx,sub_ny,sub_nz)# Petrov-Galerkin dissipation
+    break
     [k_x,k_y,k_z] = Petrov_Galerkin_dissipation(values_u, values_v, values_w, eplsion_k, sigma)# Momentum equation 
     #####################################################################################
     a_u = k_x*dt*Re - \

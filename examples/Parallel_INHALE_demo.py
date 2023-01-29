@@ -315,6 +315,10 @@ def boundary_condition_velocity(values_u,values_v,values_w,nx,ny,nz):
     tempv = tf.Variable(values_v)   
     tempw = tf.Variable(values_w)
     
+    print("1:",values_u.shape)
+    print("2:",tempu[0,1:-1,1:-1,1:3,0].shape)
+    print(tf.zeros((1,nz,nx))[0,:].shape)
+    
     # print((nz,nx,ny))
     if neighbors[LEFT] == -2:
         tempu[0,1:-1,1:-1,1,0].assign(tf.Variable(tf.ones((1,nz,nx)))[0,:]*ub) 
@@ -500,7 +504,7 @@ def Petrov_Galerkin_dissipation(values_u, values_v, values_w, eplsion_k, sigma):
 
 
 #################### Create field #####£###############
-input_shape = (1,sub_z,sub_y,sub_x,1)
+input_shape = (1,sub_z,sub_x,sub_y,1)
 values_u = tf.zeros(input_shape)
 values_v = tf.zeros(input_shape)
 values_w = tf.zeros(input_shape)
@@ -512,6 +516,7 @@ start = time.time()
 for itime in range(1,ntime+1): 
     ctime = ctime + dt 
     [values_u,values_v,values_w] = boundary_condition_velocity(values_u,values_v,values_w,sub_nx,sub_ny,sub_nz)
+    break
     values_p = boundary_condition_pressure(values_p,sub_nx,sub_ny,sub_nz)
     
     # halo update
