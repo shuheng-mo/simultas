@@ -37,8 +37,8 @@ ub = 1
 nx = 128
 ny = 128
 nz = 128
-ratio = int(nx/nz)
-nlevel = int(math.log(nz, 2)) + 1 
+ratio = int(nx/nz) # 1 in this case
+# nlevel = int(math.log(nz, 2)) + 1 
 # print('Levels of Multigrid:', nlevel)
 # print('Aspect ratio of Domain:', ratio)s
 
@@ -132,7 +132,7 @@ bias_initializer = tf.keras.initializers.constant(np.zeros((1,)))
 ################# Numerical parameters ################
 multi_itr = 4               # Iterations of multi-grid 
 j_itr = 1                   # Iterations of Jacobi 
-ntime = 5                 # Time steps
+ntime = 5                   # Time steps -----------> !!! small timesteps for testing
 n_out = 1000                 # Results output
 nrestart = 0                # Last time step for restart
 ctime_old = 0               # Last ctime for restart
@@ -211,9 +211,11 @@ if LIBM == True:
 
 # MPI initialization (this time the discretization kernel size 5x5x5,halo_size set to 2)
 he = HaloExchange(structured=True, halo_size=2, tensor_used=True,double_precision=True, corner_exchanged=True)
-sub_nx, sub_ny, sub_nz, current_domain = he.initialization(sigma, is_periodic=False, is_reordered=False)
+sub_nx, sub_ny, sub_nz, current_domain = he.initialization(sigma,topology=None,is_periodic=False, is_reordered=False)
 sub_x, sub_y, sub_z = sub_nx+4, sub_ny+4, sub_nz+4 # halo_size*2
 # print(current_domain.shape) # here each sub-domain's shape is (68,68,68)
+
+# print(he)
 
 current_domain = he.structured_halo_update_3D(current_domain)
 current_domain = current_domain.numpy()
@@ -284,28 +286,29 @@ central_zadv_5th = keras.models.Sequential([
                                 bias_initializer=bias_initializer),
 ])
 
+nlevel = int(math.log(sub_nz,2)) # 64 -> 2^6
 # Libraries for multigrid algorithms
-# for i in range(nlevel):
-#     locals()['CNN3D_A_'+str(2**i)] = keras.models.Sequential([
-#          keras.layers.InputLayer(input_shape=(int(nz*0.5**(nlevel-1-i)), int(ny*0.5**(nlevel-1-i)), int(nx*0.5**(nlevel-1-i)), 1)),
-#          tf.keras.layers.Conv3D(1, kernel_size=5, strides=1, padding='VALID',         
-#                                 kernel_initializer=kernel_initializer_A_mg,
-#                                 bias_initializer=bias_initializer)
-#     ])
+for i in range(nlevel+1):
+    locals()['CNN3D_A_'+str(2**(nlevel -i) + 4)] = keras.models.Sequential([
+            keras.layers.InputLayer(input_shape=(int(sub_nz*(0.5**i) + 4), int(sub_nx*(0.5**i) + 4), int(sub_ny*(0.5**i) + 4), 1)),
+            tf.keras.layers.Conv3D(1, kernel_size=5, strides=1, padding='VALID',         
+                                    kernel_initializer=kernel_initializer_A_mg,
+                                    bias_initializer=bias_initializer)
+])
     
-# for i in range(nlevel-1):
-#     locals()['restrict_'+str(2**(i+1))] = keras.models.Sequential([
-#          keras.layers.InputLayer(input_shape=(int(nz*0.5**(nlevel-2-i)), int(ny*0.5**(nlevel-2-i)), int(nx*0.5**(nlevel-2-i)), 1)),
-#          tf.keras.layers.Conv3D(1, kernel_size=2, strides=2, padding='VALID',  # restriction
-#                                 kernel_initializer=kernel_initializer_w_res,
-#                                 bias_initializer=bias_initializer),   
-#     ])    
+for i in range(nlevel):
+    locals()['restrict_'+str(2**(nlevel-i))] = keras.models.Sequential([
+         keras.layers.InputLayer(input_shape=(int(64*0.5**(i)), int(64*0.5**(i)), int(64*0.5**(i)), 1)),
+         tf.keras.layers.Conv3D(1, kernel_size=2, strides=2, padding='VALID',  # restriction
+                                kernel_initializer=kernel_initializer_w_res,
+                                bias_initializer=bias_initializer),   
+    ])   
     
-# for i in range(nlevel-1):
-#     locals()['prolongate_'+str(2**i)] = keras.models.Sequential([
-#          keras.layers.InputLayer(input_shape=(1*2**i, 1*ratio*2**i, 1*ratio*2**i, 1)),
-#          tf.keras.layers.UpSampling3D(size=(2, 2, 2)),
-#     ])
+for i in range(nlevel):
+    locals()['prolongate_'+str(2**i)] = keras.models.Sequential([
+         keras.layers.InputLayer(input_shape=(1*2**i, 1*ratio*2**i, 1*ratio*2**i, 1)),
+         tf.keras.layers.UpSampling3D(size=(2, 2, 2)),
+])
     
 # Functions linking to the AI libraries
 def boundary_condition_velocity(values_u,values_v,values_w,nx,ny,nz):
@@ -402,8 +405,9 @@ def boundary_condition_source(b,nx):
     'Define inflow boundary conditions for source terms to'
     'avoid incorrect paddings caused by CNNs'
     tempb = tf.Variable(b)   
-    tempb[0,:,:,0,0].assign(tf.Variable(b)[0,:,:,2,0])
-    tempb[0,:,:,1,0].assign(tf.Variable(b)[0,:,:,2,0])
+    if neighbors[LEFT] == -2:
+        tempb[0,:,:,0,0].assign(tf.Variable(b)[0,:,:,2,0])
+        tempb[0,:,:,1,0].assign(tf.Variable(b)[0,:,:,2,0])
 
     return tempb
 
@@ -440,46 +444,66 @@ def Petrov_Galerkin_dissipation(values_u, values_v, values_w, eplsion_k, sigma):
     values_u = values_u / (1+dt*sigma) 
     values_v = values_v / (1+dt*sigma)     
     values_w = values_w / (1+dt*sigma) 
+    
+    # print(values_u.shape)
+    # print(central_dif_5th(values_u).shape)
+    
+    # extract valid domains
+    tempU = tf.reshape(values_u[0,2:-2,2:-2,2:-2,0],(1,sub_nz,sub_nx,sub_ny,1))
+    tempV = tf.reshape(values_v[0,2:-2,2:-2,2:-2,0],(1,sub_nz,sub_nx,sub_ny,1))
+    tempW = tf.reshape(values_w[0,2:-2,2:-2,2:-2,0],(1,sub_nz,sub_nx,sub_ny,1))
       
     k_u = 0.4 * 0.25 * abs(1/3*
-                               (abs(values_u) + abs(values_v) + abs(values_w)) * 
+                               (abs(tempU) + abs(tempV) + abs(tempW)) * 
                                central_dif_5th(values_u)) / (eplsion_k + 
                                (abs(central_xadv_5th(values_u)) + 
                                abs(central_yadv_5th(values_u)) + 
                                abs(central_zadv_5th(values_u)))/3)
     
     k_v = 0.4 * 0.25 * abs(1/3*
-                               (abs(values_u) + abs(values_v) + abs(values_w)) * 
+                                (abs(tempU) + abs(tempV) + abs(tempW)) * 
                                central_dif_5th(values_v)) / (eplsion_k + 
                                (abs(central_xadv_5th(values_v)) + 
                                abs(central_yadv_5th(values_v)) + 
                                abs(central_zadv_5th(values_v)))/3)
     
     k_w = 0.4 * 0.25 * abs(1/3*
-                               (abs(values_u) + abs(values_v) + abs(values_w)) * 
+                               (abs(tempU) + abs(tempV) + abs(tempW)) * 
                                central_dif_5th(values_w)) / (eplsion_k + 
                                (abs(central_xadv_5th(values_w)) + 
                                abs(central_yadv_5th(values_w)) + 
                                abs(central_zadv_5th(values_w)))/3)
+            
+    # padding and halo update                   
+    k_u = he.padding_block_halo_3D(k_u, 2).reshape(1,sub_z,sub_x,sub_y,1)
+    k_v = he.padding_block_halo_3D(k_v, 2).reshape(1,sub_z,sub_x,sub_y,1)
+    k_w = he.padding_block_halo_3D(k_w, 2).reshape(1,sub_z,sub_x,sub_y,1)
+    k_u = he.structured_halo_update_3D(k_u)
+    k_v = he.structured_halo_update_3D(k_v)
+    k_w = he.structured_halo_update_3D(k_w)
        
     k_u = tf.math.minimum(k_u, tf.ones(input_shape)/dt*0.25*2) / (1+dt*sigma) 
     k_v = tf.math.minimum(k_v, tf.ones(input_shape)/dt*0.25*2) / (1+dt*sigma)     
-    k_w = tf.math.minimum(k_w, tf.ones(input_shape)/dt*0.25*2) / (1+dt*sigma)    
+    k_w = tf.math.minimum(k_w, tf.ones(input_shape)/dt*0.25*2) / (1+dt*sigma)
     
+    # extract valid domains
+    tempKU = tf.reshape(k_u[0,2:-2,2:-2,2:-2,0],(1,sub_nz,sub_nx,sub_ny,1))
+    tempKV = tf.reshape(k_v[0,2:-2,2:-2,2:-2,0],(1,sub_nz,sub_nx,sub_ny,1))
+    tempKW = tf.reshape(k_w[0,2:-2,2:-2,2:-2,0],(1,sub_nz,sub_nx,sub_ny,1))    
     
-    k_x = 3*0.5*(k_u*central_dif_5th(values_u) +
+    k_x = 3*0.5*(tempKU*central_dif_5th(values_u) +
                 central_dif_5th(values_u*k_u) -
-                values_u*central_dif_5th(k_u))
+                tempU*central_dif_5th(k_u))
 
 
-    k_y = 3*0.5*(k_v*central_dif_5th(values_v) + 
+    k_y = 3*0.5*(tempKV*central_dif_5th(values_v) + 
                 central_dif_5th(values_v*k_v) -
-                values_v*central_dif_5th(k_v))
+                tempV*central_dif_5th(k_v))
 
 
-    k_z = 3*0.5*(k_w*central_dif_5th(values_w) + 
+    k_z = 3*0.5*(tempKW*central_dif_5th(values_w) + 
                 central_dif_5th(values_w*k_w) -
-                values_w*central_dif_5th(k_w))
+                tempW*central_dif_5th(k_w))
 
     return k_x, k_y, k_z
 
@@ -555,140 +579,258 @@ def Petrov_Galerkin_dissipation_high(values_u, values_v, values_w, eplsion_k, si
 
     return k_x, k_y, k_z
 
-# AI-HFM Solver
+# AI-HFM Solvere
 start = time.time()
 # 5 timesteps in total
-for itime in range(1,ntime+1): 
+for itime in range(1,2): 
     ctime = ctime + dt 
     #####################################################################################
     [values_u,values_v,values_w] = boundary_condition_velocity(values_u,values_v,values_w,sub_nx,sub_ny,sub_nz)
     values_p = boundary_condition_pressure(values_p,sub_nx,sub_ny,sub_nz)# Petrov-Galerkin dissipation
-    break
-    [k_x,k_y,k_z] = Petrov_Galerkin_dissipation(values_u, values_v, values_w, eplsion_k, sigma)# Momentum equation 
-    #####################################################################################
-    a_u = k_x*dt*Re - \
-    values_u*central_xadv_5th(values_u)*dt - \
-    values_v*central_yadv_5th(values_u)*dt - \
-    values_w*central_zadv_5th(values_u)*dt
-    b_u = 0.5*a_u + values_u
-    a_v = k_y*dt*Re - \
-    values_u*central_xadv_5th(values_v)*dt - \
-    values_v*central_yadv_5th(values_v)*dt - \
-    values_w*central_zadv_5th(values_v)*dt
-    b_v = 0.5*a_v + values_v
-    a_w = k_z*dt*Re - \
-    values_u*central_xadv_5th(values_w)*dt - \
-    values_v*central_yadv_5th(values_w)*dt - \
-    values_w*central_zadv_5th(values_w)*dt 
-    b_w = 0.5*a_w + values_w
-    #####################################################################################
-    [b_u,b_v,b_w] = boundary_condition_velocity(b_u,b_v,b_w)
-    [kb_x,kb_y,kb_z] = Petrov_Galerkin_dissipation(b_u, b_v, b_w, eplsion_k, sigma)
-    #####################################################################################
-    c_u = kb_x*dt*Re - \
-    b_u*central_xadv_5th(b_u)*dt - \
-    b_v*central_yadv_5th(b_u)*dt - \
-    b_w*central_zadv_5th(b_u)*dt
-    values_u = values_u + c_u      
-    c_v = kb_y*dt*Re - \
-    b_u*central_xadv_5th(b_v)*dt - \
-    b_v*central_yadv_5th(b_v)*dt - \
-    b_w*central_zadv_5th(b_v)*dt 
-    values_v = values_v + c_v
-    c_w = kb_z*dt*Re - \
-    b_u*central_xadv_5th(b_w)*dt - \
-    b_v*central_yadv_5th(b_w)*dt - \
-    b_w*central_zadv_5th(b_w)*dt 
-    values_w = values_w + c_w    
-    #####################################################################################
     
+    # halo update & extract the valid domain
+    values_u = he.structured_halo_update_3D(values_u)
+    values_v = he.structured_halo_update_3D(values_v)
+    values_w = he.structured_halo_update_3D(values_w)
+    values_p = he.structured_halo_update_3D(values_p)
+    tempU = tf.reshape(values_u[0,2:-2,2:-2,2:-2,0],(1,sub_nz,sub_nx,sub_ny,1))
+    tempV = tf.reshape(values_v[0,2:-2,2:-2,2:-2,0],(1,sub_nz,sub_nx,sub_ny,1))
+    tempW = tf.reshape(values_w[0,2:-2,2:-2,2:-2,0],(1,sub_nz,sub_nx,sub_ny,1))
+    
+    [k_x,k_y,k_z] = Petrov_Galerkin_dissipation(values_u, values_v, values_w, eplsion_k, current_domain)# Momentum equation 
+    #####################################################################################
+    # Momentum equation
+    a_u = k_x*dt*Re - \
+    tempU*central_xadv_5th(values_u)*dt - \
+    tempV*central_yadv_5th(values_u)*dt - \
+    tempW*central_zadv_5th(values_u)*dt
+    b_u = 0.5*a_u + tempU
+    a_v = k_y*dt*Re - \
+    tempU*central_xadv_5th(values_v)*dt - \
+    tempV*central_yadv_5th(values_v)*dt - \
+    tempW*central_zadv_5th(values_v)*dt
+    b_v = 0.5*a_v + tempV
+    a_w = k_z*dt*Re - \
+    tempU*central_xadv_5th(values_w)*dt - \
+    tempV*central_yadv_5th(values_w)*dt - \
+    tempW*central_zadv_5th(values_w)*dt 
+    b_w = 0.5*a_w + tempW
+    #####################################################################################
+    # padding and halo update
+    b_u = he.padding_block_halo_3D(b_u, 2).reshape(1,sub_z,sub_x,sub_y,1)
+    b_v = he.padding_block_halo_3D(b_v, 2).reshape(1,sub_z,sub_x,sub_y,1)
+    b_w = he.padding_block_halo_3D(b_w, 2).reshape(1,sub_z,sub_x,sub_y,1)
+    b_u = he.structured_halo_update_3D(b_u)
+    b_v = he.structured_halo_update_3D(b_v)
+    b_w = he.structured_halo_update_3D(b_w)
+
+    [b_u,b_v,b_w] = boundary_condition_velocity(b_u,b_v,b_w,sub_nx,sub_ny,sub_nz)
+    [kb_x,kb_y,kb_z] = Petrov_Galerkin_dissipation(b_u, b_v, b_w, eplsion_k, current_domain)
+    #####################################################################################
+    # extract valid domains    
+    tempBU = tf.reshape(b_u[0,2:-2,2:-2,2:-2,0],(1,sub_nz,sub_nx,sub_ny,1))
+    tempBV = tf.reshape(b_v[0,2:-2,2:-2,2:-2,0],(1,sub_nz,sub_nx,sub_ny,1))
+    tempBW = tf.reshape(b_w[0,2:-2,2:-2,2:-2,0],(1,sub_nz,sub_nx,sub_ny,1))
+    
+    c_u = kb_x*dt*Re - \
+    tempBU*central_xadv_5th(b_u)*dt - \
+    tempBV*central_yadv_5th(b_u)*dt - \
+    tempBW*central_zadv_5th(b_u)*dt
+    tempU = tempU + c_u    
+      
+    c_v = kb_y*dt*Re - \
+    tempBU*central_xadv_5th(b_v)*dt - \
+    tempBV*central_yadv_5th(b_v)*dt - \
+    tempBW*central_zadv_5th(b_v)*dt 
+    tempV = tempV + c_v
+    
+    c_w = kb_z*dt*Re - \
+    tempBU*central_xadv_5th(b_w)*dt - \
+    tempBV*central_yadv_5th(b_w)*dt - \
+    tempBW*central_zadv_5th(b_w)*dt 
+    tempW = tempW + c_w    
+    #####################################################################################
+    # padding and update
+    values_u = he.padding_block_halo_3D(tempU, 2).reshape(1,sub_z,sub_x,sub_y,1)
+    values_v = he.padding_block_halo_3D(tempV, 2).reshape(1,sub_z,sub_x,sub_y,1)
+    values_w = he.padding_block_halo_3D(tempW, 2).reshape(1,sub_z,sub_x,sub_y,1)
+    values_u = he.structured_halo_update_3D(values_u)
+    values_v = he.structured_halo_update_3D(values_v)
+    values_w = he.structured_halo_update_3D(values_w)
+    #####################################################################################
+# Omitted for now
 # Passive tracer scalar transport
-    if LSCALAR == True:
-        a_t = CNN3D_central_2nd_dif(alpha) - \
-        values_u*CNN3D_central_2nd_xadv(alpha) - \
-        values_v*CNN3D_central_2nd_yadv(alpha) - \
-        values_w*CNN3D_central_2nd_zadv(alpha)
-        alpha = alpha + a_t
-        alpha = boundary_condition_indicator(alpha,nx)
-    if LMTI == True:
-        rho = alpha*rho_l + (1-alpha)*rho_g
+    # if LSCALAR == True:
+    #     a_t = CNN3D_central_2nd_dif(alpha) - \
+    #     values_u*CNN3D_central_2nd_xadv(alpha) - \
+    #     values_v*CNN3D_central_2nd_yadv(alpha) - \
+    #     values_w*CNN3D_central_2nd_zadv(alpha)
+    #     alpha = alpha + a_t
+    #     alpha = boundary_condition_indicator(alpha,nx)
+    # if LMTI == True:
+    #     rho = alpha*rho_l + (1-alpha)*rho_g
    
 #####################################################################################
 # Suppose we are using IB method in this case
 # IBM
 #     if LIBM == True:
-    [values_u,values_v,values_w] = bluff_body(values_u,values_v,values_w,sigma)
+    [values_u,values_v,values_w] = bluff_body(values_u,values_v,values_w,current_domain)
+    # halo update
+    values_u = he.structured_halo_update_3D(values_u)
+    values_v = he.structured_halo_update_3D(values_v)
+    values_w = he.structured_halo_update_3D(values_w)
 # gradp            
-    values_u = values_u - central_xadv_5th(values_p)*dt
-    values_v = values_v - central_yadv_5th(values_p)*dt  
-    values_w = values_w - central_zadv_5th(values_p)*dt     
-    [values_u,values_v,values_w] = boundary_condition_velocity(values_u,values_v,values_w)
+    tempU = tf.reshape(values_u[0,2:-2,2:-2,2:-2,0],(1,sub_nz,sub_nx,sub_ny,1))
+    tempV = tf.reshape(values_v[0,2:-2,2:-2,2:-2,0],(1,sub_nz,sub_nx,sub_ny,1))
+    tempW = tf.reshape(values_w[0,2:-2,2:-2,2:-2,0],(1,sub_nz,sub_nx,sub_ny,1))
+    
+    tempU = tempU - central_xadv_5th(values_p)*dt
+    tempV = tempV - central_yadv_5th(values_p)*dt  
+    tempW = tempW - central_zadv_5th(values_p)*dt   
+    
+    values_u = he.padding_block_halo_3D(tempU, 2).reshape(1,sub_z,sub_x,sub_y,1)
+    values_v = he.padding_block_halo_3D(tempV, 2).reshape(1,sub_z,sub_x,sub_y,1)
+    values_w = he.padding_block_halo_3D(tempW, 2).reshape(1,sub_z,sub_x,sub_y,1)
+    values_u = he.structured_halo_update_3D(values_u)
+    values_v = he.structured_halo_update_3D(values_v)
+    values_w = he.structured_halo_update_3D(values_w)  
+    
+    [values_u,values_v,values_w] = boundary_condition_velocity(values_u,values_v,values_w,sub_nx,sub_ny,sub_nz)
+    # halo update
+    values_u = he.structured_halo_update_3D(values_u)
+    values_v = he.structured_halo_update_3D(values_v)
+    values_w = he.structured_halo_update_3D(values_w)
+    
 # possion equation (multi-grid) A*P = Su
     b = -(central_xadv_5th(values_u) + \
           central_yadv_5th(values_v) + \
           central_zadv_5th(values_w))/dt
-    b = boundary_condition_source(b,nx)
-
+    b = boundary_condition_source(b,sub_nx)
+    
 #####################################################################################    
     if mgsolver == True:
         for multi_grid in range(multi_itr): 
             w_1 = tf.zeros([1,1,ratio,ratio,1])
-            r = CNN3D_A_128(values_p) - b   
-            r = tf.Variable(r)[0,:,:,nx-1,0].assign(tf.Variable(tf.zeros((1,nz,ny)))[0,:]) 
-#             r_256 = CNN3D_res_512(r) 
-#             r_128 = CNN3D_res_256(r_256) 
-            r_64 = restrict_128(r) 
-            r_32 = restrict_64(r_64) 
+            # r = CNN3D_A_128(values_p) - b   
+            r = CNN3D_A_68(values_p) -b
+            if neighbors[RIGHT] == -2:
+                r = tf.Variable(r)[0,:,:,sub_nx-1,0].assign(tf.Variable(tf.zeros((1,sub_nz,sub_nx)))[0,:]) 
+            # r_256 = CNN3D_res_512(r) 
+            # r_128 = CNN3D_res_256(r_256) 
+            # r_64 = restrict_128(r) 
+            
+            # Restriction
+            r_32 = restrict_64(r) 
             r_16 = restrict_32(r_32) 
             r_8 = restrict_16(r_16) 
             r_4 = restrict_8(r_8) 
             r_2 = restrict_4(r_4) 
             r_1 = restrict_2(r_2)
+            
+            # Jacobi iterations + prolongation
+            w_t = he.padding_block_halo_3D(w_1, 2)
+            w_t = he.structured_halo_update_3D(w_t)             
             for Jacobi in range(j_itr):
-                w_1 = (w_1 - CNN3D_A_1(w_1)/A_mg[12,2] + r_1/A_mg[12,2])
-            w_2 = prolongate_1(w_1)             
+                temp1 = CNN3D_A_5(w_t)
+                w_1 = (w_1 - temp1/A_mg[12,2] + r_1/A_mg[12,2])
+                
+            w_2 = prolongate_1(w_1)   
+            w_t1 = he.padding_block_halo_3D(w_2, 2)
+            w_t1 = he.structured_halo_update_3D(w_t1)           
             for Jacobi in range(j_itr):
-                w_2 = (w_2 - CNN3D_A_2(w_2)/A_mg[12,2] + r_2/A_mg[12,2])
+                temp2 = CNN3D_A_6(w_t1)
+                w_2 = (w_2 - temp2/A_mg[12,2] + r_2/A_mg[12,2])
+                
+            
             w_4 = prolongate_2(w_2) 
+            w_t2 = he.padding_block_halo_3D(w_4, 2)
+            w_t2 = he.structured_halo_update_3D(w_t2)
             for Jacobi in range(j_itr):
-                w_4 = (w_4 - CNN3D_A_4(w_4)/A_mg[12,2] + r_4/A_mg[12,2])
-            w_8 = prolongate_4(w_4) 
+                temp4 = CNN3D_A_8(w_t2)
+                w_4 = (w_4 - temp4/A_mg[12,2] + r_4/A_mg[12,2])
+                
+            w_8 = prolongate_4(w_4)
+            w_t3 = he.padding_block_halo_3D(w_8, 2)
+            w_t3 = he.structured_halo_update_3D(w_t3) 
             for Jacobi in range(j_itr):
-                w_8 = (w_8 - CNN3D_A_8(w_8)/A_mg[12,2] + r_8/A_mg[12,2])
-            w_16 = prolongate_8(w_8) 
+                temp8 = CNN3D_A_12(w_t3)
+                w_8 = (w_8 - temp8/A_mg[12,2] + r_8/A_mg[12,2])
+                
+            w_16 = prolongate_8(w_8)
+            w_t4 = he.padding_block_halo_3D(w_16, 2)
+            w_t4 = he.structured_halo_update_3D(w_t4) 
             for Jacobi in range(j_itr):
-                w_16 = (w_16 - CNN3D_A_16(w_16)/A_mg[12,2] + r_16/A_mg[12,2])
-            w_32 = prolongate_16(w_16) 
+                temp16 = CNN3D_A_20(w_t4)
+                w_16 = (w_16 - temp16/A_mg[12,2] + r_16/A_mg[12,2])
+                
+            w_32 = prolongate_16(w_16)
+            w_t5 = he.padding_block_halo_3D(w_32, 2)
+            w_t5 = he.structured_halo_update_3D(w_t5) 
             for Jacobi in range(j_itr):
-                w_32 = (w_32 - CNN3D_A_32(w_32)/A_mg[12,2] + r_32/A_mg[12,2])
-            w_64 = prolongate_32(w_32) 
+                temp32 = CNN3D_A_36(w_t5)
+                w_32 = (w_32 - temp32/A_mg[12,2] + r_32/A_mg[12,2])
+                
+            w_64 = prolongate_32(w_32)
+            w_t6 = he.padding_block_halo_3D(w_64,2)
+            w_t6 = he.structured_halo_update_3D(w_t6)   
             for Jacobi in range(j_itr):
-                w_64 = (w_64 - CNN3D_A_64(w_64)/A_mg[12,2] + r_64/A_mg[12,2])
-            w_128 = prolongate_64(w_64) 
+                temp64 = CNN3D_A_68(w_t6)
+                w_64 = (w_64 - temp64/A_mg[12,2] + r/A_mg[12,2])
+            
+            w_64 = he.padding_block_halo_3D(w_64,2)
+            w_64 = he.structured_halo_update_3D(w_64)
+            # w_128 = prolongate_64(w_64) 
 #             for Jacobi in range(j_itr):
 #                 w_128 = (w_128 - CNN3D_A_128(w_128)/w5[0,1,1,1,0] + r_128/w5[0,1,1,1,0] )
 #             w_256 = CNN3D_prol_128(w_128)
 #             for Jacobi in range(j_itr):
 #                 w_256 = (w_256 - CNN3D_A_256(w_256)/w5[0,1,1,1,0] + r_256/w5[0,1,1,1,0] )
 #             w_512 = CNN3D_prol_256(w_256)
-            values_p = values_p - w_128
-            values_p = tf.Variable(values_p)[0,:,:,nx-1,0].assign(tf.Variable(tf.zeros((1,nz,ny)))[0,:])         
-            values_p = (values_p - CNN3D_A_128(values_p)/A_mg[12,2] + b/A_mg[12,2])    
+            values_p = values_p - w_64
+            if neighbors[RIGHT] == -2:
+                values_p = tf.Variable(values_p)[0,2:-2,2:-2,sub_nx-1,0].assign(tf.Variable(tf.zeros((1,sub_nz,sub_nx)))[0,:])
+            
+            tempVal = tf.reshape(values_p[0,2:-2,2:-2,2:-2,0],(1,sub_nz,sub_nx,sub_ny,1))
+            tempVal = (tempVal - CNN3D_A_68(values_p)/A_mg[12,2] + b/A_mg[12,2])
+            values_p = he.padding_block_halo_3D(tempVal,2)
+            values_p = he.structured_halo_update_3D(values_p)
 
 #####################################################################################
-# correct
-    values_p = boundary_condition_pressure(values_p,nx)
-    values_u = values_u - central_xadv_5th(values_p)*dt
-    values_v = values_v - central_yadv_5th(values_p)*dt  
-    values_w = values_w - central_zadv_5th(values_p)*dt      
-    [values_u,values_v,values_w] = boundary_condition_velocity(values_u,values_v,values_w)
+# correction
+    values_p = boundary_condition_pressure(values_p,sub_nx,sub_ny,sub_nz)
+    values_p = he.structured_halo_update_3D(values_p)
+    
+    # extract valid domain
+    tempU = tf.reshape(values_u[0,2:-2,2:-2,2:-2,0],(1,sub_nz,sub_nx,sub_ny,1))
+    tempV = tf.reshape(values_v[0,2:-2,2:-2,2:-2,0],(1,sub_nz,sub_nx,sub_ny,1))
+    tempW = tf.reshape(values_w[0,2:-2,2:-2,2:-2,0],(1,sub_nz,sub_nx,sub_ny,1))
+
+    tempU = tempU - central_xadv_5th(values_p)*dt
+    tempV = tempV - central_yadv_5th(values_p)*dt  
+    tempW = tempW - central_zadv_5th(values_p)*dt   
+    
+    # padding and halo updates
+    values_u = he.padding_block_halo_3D(tempU, 2).reshape(1,sub_z,sub_x,sub_y,1)
+    values_v = he.padding_block_halo_3D(tempV, 2).reshape(1,sub_z,sub_x,sub_y,1)
+    values_w = he.padding_block_halo_3D(tempW, 2).reshape(1,sub_z,sub_x,sub_y,1)  
+    values_u = he.structured_halo_update_3D(values_u)
+    values_v = he.structured_halo_update_3D(values_v)
+    values_w = he.structured_halo_update_3D(values_w)
+    
+    [values_u,values_v,values_w] = boundary_condition_velocity(values_u,values_v,values_w,sub_nx,sub_ny,sub_nz)
+    values_u = he.structured_halo_update_3D(values_u) # halo update
+    values_v = he.structured_halo_update_3D(values_v) # halo update
+    values_w = he.structured_halo_update_3D(values_w) # halo update
 #     if LIBM == True:
-    [values_u,values_v,values_w] = bluff_body(values_u,values_v,values_w,sigma)
+    [values_u,values_v,values_w] = bluff_body(values_u,values_v,values_w,current_domain)
+    values_u = he.structured_halo_update_3D(values_u) # halo update
+    values_v = he.structured_halo_update_3D(values_v) # halo update
+    values_w = he.structured_halo_update_3D(values_w) # halo update
 # output   
     print('Time step:', itime) 
-    print('Pressure error:', np.max(w_128), 'cty equation residual:', np.max(r))
+    print('Pressure error:', np.max(w_64), 'cty equation residual:', np.max(r))
     print('========================================================')
-    if np.max(np.abs(w_128)) > nsafe:
+    if np.max(np.abs(w_64)) > nsafe:
         print('Not converged !!!!!!')
         break
     if save_fig == True:
@@ -696,7 +838,7 @@ for itime in range(1,ntime+1):
       
 #####################################################################################
 end = time.time()
-print('time',(end-start))
+print('[Total Running Time]',(end-start))
 
 np.save("Data_Results/Parallel/u"+str(itime), arr=values_u[0,:,:,:,0])
 np.save("Data_Results/Parallel/v"+str(itime), arr=values_v[0,:,:,:,0])
